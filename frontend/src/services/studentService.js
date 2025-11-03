@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const API_BASE_URL = 'https://students-management-app-production-548b.up.railway.app/';
+const API_BASE_URL = 'https://students-management-app-production-548b.up.railway.app/api';
 
 const api = axios.create({
   baseURL: API_BASE_URL,
