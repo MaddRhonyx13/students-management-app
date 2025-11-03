@@ -245,7 +245,7 @@ app.delete("/api/students/:id", (req, res) => {
   });
 });
 
-app.use("*", (req, res) => {
+app.use((req, res) => {
   res.status(404).json({ error: "Route not found" });
 });
 
