@@ -3,112 +3,134 @@ const cors = require("cors");
 const mysql = require("mysql2");
 
 const app = express();
-
-app.use(cors({
-  origin: "*",
-  methods: ["GET", "POST", "PUT", "DELETE"],
-  credentials: true
-}));
+app.use(cors());
 app.use(express.json());
 
-const dbConfig = {
-  host: process.env.MYSQLHOST || "localhost",
-  user: process.env.MYSQLUSER || "root", 
-  password: process.env.MYSQLPASSWORD || "",
-  database: process.env.MYSQLDATABASE || "student_management",
-  port: process.env.MYSQLPORT || 3306,
-  connectTimeout: 60000,
-  acquireTimeout: 60000,
-  timeout: 60000,
-  reconnect: true
-};
-
-console.log("Database Configuration:", {
-  host: dbConfig.host,
-  user: dbConfig.user,
-  database: dbConfig.database,
-  port: dbConfig.port
+// Debug: Log all MySQL-related environment variables
+console.log("=== DATABASE ENVIRONMENT VARIABLES ===");
+const mysqlVars = Object.keys(process.env).filter(key => 
+  key.includes('MYSQL') || key.includes('DATABASE') || key.includes('DB_')
+);
+mysqlVars.forEach(key => {
+  // Don't log full passwords, just indicate they exist
+  if (key.includes('PASSWORD')) {
+    console.log(`${key}: [SET]`);
+  } else {
+    console.log(`${key}: ${process.env[key]}`);
+  }
 });
+console.log("======================================");
+
+// Try different possible connection configurations
+let connectionConfigs = [
+  // Try MYSQL_URL first (most common in Railway)
+  { name: "MYSQL_URL", config: process.env.MYSQL_URL },
+  // Try individual Railway MySQL variables
+  { 
+    name: "Railway MySQL Vars", 
+    config: {
+      host: process.env.MYSQLHOST,
+      user: process.env.MYSQLUSER,
+      password: process.env.MYSQLPASSWORD,
+      database: process.env.MYSQLDATABASE,
+      port: process.env.MYSQLPORT || 3306
+    }
+  },
+  // Try DATABASE_URL (common alternative)
+  { name: "DATABASE_URL", config: process.env.DATABASE_URL }
+];
 
 let db;
+let currentConfig;
 
-function initializeDatabase() {
+// Try each connection method
+function tryConnections(index = 0) {
+  if (index >= connectionConfigs.length) {
+    console.error("❌ All connection attempts failed!");
+    console.log("🔄 Retrying in 10 seconds...");
+    setTimeout(() => tryConnections(0), 10000);
+    return;
+  }
+
+  const config = connectionConfigs[index];
+  console.log(`🔄 Attempting connection with: ${config.name}`);
+  
   try {
-    db = mysql.createConnection(dbConfig);
-    
+    if (typeof config.config === 'string') {
+      // It's a connection string
+      db = mysql.createConnection(config.config);
+      currentConfig = config.name;
+    } else if (config.config.host) {
+      // It's a config object
+      db = mysql.createConnection(config.config);
+      currentConfig = config.name;
+    } else {
+      // Invalid config, try next
+      tryConnections(index + 1);
+      return;
+    }
+
     db.connect((err) => {
       if (err) {
-        console.error("❌ Database connection failed:", err.message);
-        console.log("🔄 Retrying in 5 seconds...");
-        setTimeout(initializeDatabase, 5000);
-        return;
-      }
-      
-      console.log("✅ Connected to MySQL database on Railway");
-      createTable();
-    });
-
-    db.on('error', (err) => {
-      console.error('❌ Database error:', err.message);
-      if (err.code === 'PROTOCOL_CONNECTION_LOST') {
-        console.log("🔄 Reconnecting to database...");
+        console.error(`❌ Failed with ${config.name}:`, err.message);
+        tryConnections(index + 1);
+      } else {
+        console.log(`✅ SUCCESS! Connected using: ${config.name}`);
         initializeDatabase();
       }
     });
-    
-  } catch (err) {
-    console.error("❌ Failed to create database connection:", err.message);
-    setTimeout(initializeDatabase, 5000);
+
+    db.on('error', (err) => {
+      console.error('❌ Database connection lost:', err.message);
+      setTimeout(() => tryConnections(0), 5000);
+    });
+
+  } catch (error) {
+    console.error(`❌ Error with ${config.name}:`, error.message);
+    tryConnections(index + 1);
   }
 }
 
-function createTable() {
-  const createTableQuery = `
+function initializeDatabase() {
+  console.log("📋 Initializing database...");
+  
+  const createTableSQL = `
     CREATE TABLE IF NOT EXISTS students (
       id INT AUTO_INCREMENT PRIMARY KEY,
       name VARCHAR(255) NOT NULL,
       email VARCHAR(255) UNIQUE NOT NULL,
       course VARCHAR(255) NOT NULL,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )
   `;
-  
-  db.query(createTableQuery, (err) => {
+
+  db.query(createTableSQL, (err) => {
     if (err) {
-      console.error("❌ Error creating table:", err);
+      console.error("❌ Error creating table:", err.message);
     } else {
-      console.log("✅ Students table is ready");
+      console.log("✅ Students table ready!");
       
+      // Add sample data if empty
       db.query("SELECT COUNT(*) as count FROM students", (err, results) => {
         if (!err && results[0].count === 0) {
-          addSampleData();
+          const sampleData = [
+            ['John Doe', 'john@example.com', 'Computer Science'],
+            ['Jane Smith', 'jane@example.com', 'Mathematics']
+          ];
+          
+          sampleData.forEach(student => {
+            db.query(
+              "INSERT IGNORE INTO students (name, email, course) VALUES (?, ?, ?)",
+              student
+            );
+          });
+          console.log("📝 Added sample data");
         }
       });
     }
   });
 }
 
-function addSampleData() {
-  const sampleStudents = [
-    ['MaddRhonyx', 'madd@example.com', 'Computer Science'],
-    ['Lilly', 'lillian@example.com', 'Mathematics'],
-    ['Mike', 'mike@example.com', 'Physics']
-  ];
-  
-  sampleStudents.forEach((student, index) => {
-    db.query(
-      "INSERT IGNORE INTO students (name, email, course) VALUES (?, ?, ?)",
-      student,
-      (err) => {
-        if (err) {
-          console.error("❌ Error adding sample student:", err);
-        } else if (index === sampleStudents.length - 1) {
-          console.log("📝 Sample students added successfully");
-        }
-      }
-    );
-  });
-}
 
 app.get("/", (req, res) => {
   const dbStatus = db && db.state === 'authenticated' ? 'connected' : 'disconnected';
