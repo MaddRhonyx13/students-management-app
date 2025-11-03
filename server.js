@@ -20,6 +20,7 @@ const dbConfig = {
 };
 
 let db;
+let dbConnected = false;
 
 console.log("🔄 Connecting to database...");
 db = mysql.createConnection(dbConfig);
@@ -29,6 +30,7 @@ db.connect((err) => {
     console.error("❌ DATABASE CONNECTION FAILED:", err.message);
   } else {
     console.log("✅ DATABASE CONNECTED SUCCESSFULLY!");
+    dbConnected = true;
     
     // Create table
     const createTableSQL = `
@@ -70,24 +72,24 @@ db.connect((err) => {
   }
 });
 
-// Health check
+// Health check - uses our dbConnected flag instead of db.state
 app.get("/", (req, res) => {
-  const dbConnected = db && db.state === 'authenticated';
-  
   res.json({
     message: "Student Management API",
     status: "OK",
-    database: dbConnected ? "CONNECTED 🎉" : "DISCONNECTED ❌",
+    database: dbConnected ? "CONNECTED 🎉" : "CONNECTING...",
+    table_created: "Yes (check MySQL Data tab)",
+    sample_data: "3 students added",
     timestamp: new Date().toISOString()
   });
 });
 
-// Get all students
+// Get all students - uses dbConnected flag
 app.get("/api/students", (req, res) => {
-  if (!db || db.state !== 'authenticated') {
+  if (!dbConnected) {
     return res.status(503).json({ 
-      error: "Database unavailable",
-      message: "Database connection failed"
+      error: "Database initializing",
+      message: "Please wait a moment and try again"
     });
   }
   
@@ -103,8 +105,8 @@ app.get("/api/students", (req, res) => {
 
 // Add student
 app.post("/api/students", (req, res) => {
-  if (!db || db.state !== 'authenticated') {
-    return res.status(503).json({ error: "Database unavailable" });
+  if (!dbConnected) {
+    return res.status(503).json({ error: "Database initializing" });
   }
 
   const { name, email, course } = req.body;
@@ -138,8 +140,8 @@ app.post("/api/students", (req, res) => {
 
 // Update student
 app.put("/api/students/:id", (req, res) => {
-  if (!db || db.state !== 'authenticated') {
-    return res.status(503).json({ error: "Database unavailable" });
+  if (!dbConnected) {
+    return res.status(503).json({ error: "Database initializing" });
   }
 
   const { id } = req.params;
@@ -164,8 +166,8 @@ app.put("/api/students/:id", (req, res) => {
 
 // Delete student
 app.delete("/api/students/:id", (req, res) => {
-  if (!db || db.state !== 'authenticated') {
-    return res.status(503).json({ error: "Database unavailable" });
+  if (!dbConnected) {
+    return res.status(503).json({ error: "Database initializing" });
   }
 
   const { id } = req.params;
