@@ -4,160 +4,133 @@ const mysql = require("mysql2");
 
 const app = express();
 
-app.use(cors({
-  origin: "*",
-  methods: ["GET", "POST", "PUT", "DELETE"],
-  credentials: true
-}));
+// Middleware
+app.use(cors());
 app.use(express.json());
 
+// Database configuration - Railway automatically sets these
 const dbConfig = {
   host: process.env.MYSQLHOST,
-  user: process.env.MYSQLUSER, 
+  user: process.env.MYSQLUSER,
   password: process.env.MYSQLPASSWORD,
   database: process.env.MYSQLDATABASE,
-  port: process.env.MYSQLPORT || 3306,
-  connectTimeout: 60000,
-  acquireTimeout: 60000,
-  timeout: 60000,
-  reconnect: true
+  port: process.env.MYSQLPORT || 3306
 };
 
-console.log("Database Configuration:", {
-  host: dbConfig.host,
-  user: dbConfig.user,
-  database: dbConfig.database,
-  port: dbConfig.port
-});
+console.log("🔧 Database Configuration:");
+console.log("Host:", dbConfig.host);
+console.log("Database:", dbConfig.database);
+console.log("User:", dbConfig.user);
 
 let db;
 
+// Initialize database
 function initializeDatabase() {
-  try {
-    db = mysql.createConnection(dbConfig);
-    
-    db.connect((err) => {
-      if (err) {
-        console.error("❌ Database connection failed:", err.message);
-        console.log("🔄 Retrying in 5 seconds...");
-        setTimeout(initializeDatabase, 5000);
-        return;
-      }
-      
-      console.log("✅ Connected to MySQL database on Railway");
-      createTable();
-    });
+  console.log("🔄 Connecting to database...");
+  
+  db = mysql.createConnection(dbConfig);
 
-    db.on('error', (err) => {
-      console.error('❌ Database error:', err.message);
-      if (err.code === 'PROTOCOL_CONNECTION_LOST') {
-        console.log("🔄 Reconnecting to database...");
-        initializeDatabase();
-      }
-    });
-    
-  } catch (err) {
-    console.error("❌ Failed to create database connection:", err.message);
-    setTimeout(initializeDatabase, 5000);
-  }
+  db.connect((err) => {
+    if (err) {
+      console.error("❌ DATABASE CONNECTION FAILED:", err.message);
+      console.log("This means:");
+      console.log("1. MySQL service is not connected to this app");
+      console.log("2. Environment variables are missing");
+      console.log("3. Database credentials are wrong");
+      return;
+    }
+
+    console.log("✅ CONNECTED TO DATABASE!");
+    setupTable();
+  });
 }
 
-function createTable() {
-  const createTableQuery = `
+// Setup table and sample data
+function setupTable() {
+  const createTableSQL = `
     CREATE TABLE IF NOT EXISTS students (
       id INT AUTO_INCREMENT PRIMARY KEY,
       name VARCHAR(255) NOT NULL,
       email VARCHAR(255) UNIQUE NOT NULL,
       course VARCHAR(255) NOT NULL,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )
   `;
-  
-  db.query(createTableQuery, (err) => {
+
+  db.query(createTableSQL, (err) => {
     if (err) {
-      console.error("❌ Error creating table:", err);
-    } else {
-      console.log("✅ Students table is ready");
+      console.error("❌ Table creation error:", err.message);
+      return;
+    }
+    
+    console.log("✅ Students table ready!");
+    addSampleData();
+  });
+}
+
+// Add sample data
+function addSampleData() {
+  db.query("SELECT COUNT(*) as count FROM students", (err, results) => {
+    if (err) return;
+    
+    if (results[0].count === 0) {
+      console.log("📝 Adding sample data...");
+      const samples = [
+        ['John Doe', 'john@example.com', 'Computer Science'],
+        ['Jane Smith', 'jane@example.com', 'Mathematics'],
+        ['Mike Johnson', 'mike@example.com', 'Physics']
+      ];
       
-      db.query("SELECT COUNT(*) as count FROM students", (err, results) => {
-        if (!err && results[0].count === 0) {
-          addSampleData();
-        }
+      samples.forEach(student => {
+        db.query(
+          "INSERT IGNORE INTO students (name, email, course) VALUES (?, ?, ?)",
+          student
+        );
       });
     }
   });
 }
 
-function addSampleData() {
-  const sampleStudents = [
-    ['MaddRhonyx', 'madd@example.com', 'Computer Science'],
-    ['Lilly', 'lillian@example.com', 'Mathematics'],
-    ['Mike', 'mike@example.com', 'Physics']
-  ];
-  
-  sampleStudents.forEach((student, index) => {
-    db.query(
-      "INSERT IGNORE INTO students (name, email, course) VALUES (?, ?, ?)",
-      student,
-      (err) => {
-        if (err) {
-          console.error("❌ Error adding sample student:", err);
-        } else if (index === sampleStudents.length - 1) {
-          console.log("📝 Sample students added successfully");
-        }
-      }
-    );
-  });
-}
-
+// Health check
 app.get("/", (req, res) => {
-  const dbStatus = db && db.state === 'authenticated' ? 'connected' : 'disconnected';
+  const dbConnected = db && db.state === 'authenticated';
   
-  res.json({ 
-    message: "🎓 Student Management API is running!",
-    status: "OK",
-    timestamp: new Date().toISOString(),
-    environment: process.env.NODE_ENV || "development",
-    database: dbStatus,
-    endpoints: {
-      getStudents: "GET /api/students",
-      addStudent: "POST /api/students",
-      updateStudent: "PUT /api/students/:id",
-      deleteStudent: "DELETE /api/students/:id"
-    }
+  res.json({
+    message: "Student Management API",
+    status: "OK", 
+    database: dbConnected ? "connected" : "disconnected",
+    timestamp: new Date().toISOString()
   });
 });
 
+// Get all students
 app.get("/api/students", (req, res) => {
   if (!db || db.state !== 'authenticated') {
-    return res.status(503).json({ 
-      error: "Database temporarily unavailable",
-      message: "Please try again in a few moments"
+    return res.status(503).json({
+      error: "Database unavailable",
+      message: "Database service is not connected to this app"
     });
   }
   
   db.query("SELECT * FROM students ORDER BY created_at DESC", (err, results) => {
     if (err) {
-      console.error("❌ Error fetching students:", err);
-      res.status(500).json({ error: "Database error", details: err.message });
+      res.status(500).json({ error: err.message });
     } else {
       res.json(results);
     }
   });
 });
 
+// Add student
 app.post("/api/students", (req, res) => {
   if (!db || db.state !== 'authenticated') {
-    return res.status(503).json({ 
-      error: "Database temporarily unavailable",
-      message: "Please try again in a few moments"
-    });
+    return res.status(503).json({ error: "Database unavailable" });
   }
 
   const { name, email, course } = req.body;
   
   if (!name || !email || !course) {
-    return res.status(400).json({ error: "All fields are required" });
+    return res.status(400).json({ error: "All fields required" });
   }
 
   db.query(
@@ -165,108 +138,67 @@ app.post("/api/students", (req, res) => {
     [name, email, course],
     (err, result) => {
       if (err) {
-        console.error("❌ Error adding student:", err);
         if (err.code === 'ER_DUP_ENTRY') {
-          res.status(400).json({ error: "Email already exists" });
+          res.status(400).json({ error: "Email exists" });
         } else {
-          res.status(500).json({ error: "Failed to add student", details: err.message });
+          res.status(500).json({ error: err.message });
         }
       } else {
         res.status(201).json({
           id: result.insertId,
-          name,
-          email,
-          course,
-          message: "Student added successfully"
+          name, email, course,
+          message: "Student added"
         });
       }
     }
   );
 });
 
+// Update student
 app.put("/api/students/:id", (req, res) => {
   if (!db || db.state !== 'authenticated') {
-    return res.status(503).json({ 
-      error: "Database temporarily unavailable",
-      message: "Please try again in a few moments"
-    });
+    return res.status(503).json({ error: "Database unavailable" });
   }
 
   const { id } = req.params;
   const { name, email, course } = req.body;
 
-  if (!name || !email || !course) {
-    return res.status(400).json({ error: "All fields are required" });
-  }
-
   db.query(
-    "UPDATE students SET name = ?, email = ?, course = ? WHERE id = ?",
+    "UPDATE students SET name=?, email=?, course=? WHERE id=?",
     [name, email, course, id],
     (err, result) => {
       if (err) {
-        console.error("❌ Error updating student:", err);
-        if (err.code === 'ER_DUP_ENTRY') {
-          res.status(400).json({ error: "Email already exists" });
-        } else {
-          res.status(500).json({ error: "Failed to update student", details: err.message });
-        }
+        res.status(500).json({ error: err.message });
+      } else if (result.affectedRows === 0) {
+        res.status(404).json({ error: "Student not found" });
       } else {
-        if (result.affectedRows === 0) {
-          res.status(404).json({ error: "Student not found" });
-        } else {
-          res.json({ message: "Student updated successfully" });
-        }
+        res.json({ message: "Student updated" });
       }
     }
   );
 });
 
+// Delete student
 app.delete("/api/students/:id", (req, res) => {
   if (!db || db.state !== 'authenticated') {
-    return res.status(503).json({ 
-      error: "Database temporarily unavailable",
-      message: "Please try again in a few moments"
-    });
+    return res.status(503).json({ error: "Database unavailable" });
   }
 
   const { id } = req.params;
 
-  db.query("DELETE FROM students WHERE id = ?", [id], (err, result) => {
+  db.query("DELETE FROM students WHERE id=?", [id], (err, result) => {
     if (err) {
-      console.error("❌ Error deleting student:", err);
-      res.status(500).json({ error: "Failed to delete student", details: err.message });
+      res.status(500).json({ error: err.message });
+    } else if (result.affectedRows === 0) {
+      res.status(404).json({ error: "Student not found" });
     } else {
-      if (result.affectedRows === 0) {
-        res.status(404).json({ error: "Student not found" });
-      } else {
-        res.json({ message: "Student deleted successfully" });
-      }
+      res.json({ message: "Student deleted" });
     }
   });
 });
 
-app.use((req, res) => {
-  res.status(404).json({ error: "Route not found" });
-});
-
-app.use((err, req, res, next) => {
-  console.error("❌ Server error:", err);
-  res.status(500).json({ error: "Internal server error" });
-});
-
 const PORT = process.env.PORT || 1000;
-app.listen(PORT, '0.0.0.0', () => {
+app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
-  console.log(`📍 Environment: ${process.env.NODE_ENV || 'development'}`);
-  console.log(`📊 Database: ${dbConfig.host}:${dbConfig.port}/${dbConfig.database}`);
-  
   initializeDatabase();
-});
-
-process.on('SIGINT', () => {
-  console.log('🛑 Shutting down gracefully...');
-  if (db) {
-    db.end();
-  }
-  process.exit(0);
 });
